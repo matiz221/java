@@ -1,40 +1,48 @@
 public class DeathCauseStatistic {
-    private String icdCode;
-    private int[] deathsByAgeGroup;
+    private String icdCode;        // kod choroby ICD-10
+    private int[] deathsByAgeGroup; // liczby zgonów w kolejnych grupach wiekowych
 
+    // Konstruktor ustawiający kod i tablicę zgonów
     public DeathCauseStatistic(String icdCode, int[] deathsByAgeGroup) {
         this.icdCode = icdCode;
         this.deathsByAgeGroup = deathsByAgeGroup;
     }
 
+    // Tworzy obiekt z linii CSV (tabulator jako separator)
     public static DeathCauseStatistic fromCsvLine(String line) {
-        String[] values = line.split("\t");
-        if (values.length < 3) return null;
-        int[] deaths = new int[values.length - 2];
+        String[] values = line.split("\t");      // rozdziel linię po tabulatorach
+        if (values.length < 3) return null;      // jeśli za krótka linia, zwróć null
+        int[] deaths = new int[values.length - 2]; // tablica na zgonów w grupach wiekowych
+        // Parsujemy liczby zgonów (pomijamy dwie pierwsze kolumny: kod i sumę)
         for (int i = 2; i < values.length; i++) {
-            deaths[i - 2] = Integer.parseInt(values[i].trim());
+            deaths[i - 2] = Integer.parseInt(values[i].trim()); // usuwamy spacje i konwertujemy na int
         }
+        // Tworzymy i zwracamy nowy obiekt DeathCauseStatistic
         return new DeathCauseStatistic(values[0], deaths);
     }
 
+    // Getter na kod ICD
     public String getIcdCode() {
         return icdCode;
     }
 
+    // Metoda zwraca liczbę zgonów dla podanego wieku na podstawie grup wiekowych
     public int getDeathsForAge(int age, int[] ageGroupBoundaries) {
         for (int i = 0; i < ageGroupBoundaries.length - 1; i++) {
             if (age >= ageGroupBoundaries[i] && age < ageGroupBoundaries[i + 1]) {
                 return deathsByAgeGroup[i];
             }
         }
+        // Jeśli wiek wyższy niż ostatnia granica, zwróć ostatnią grupę
         int lastIndex = deathsByAgeGroup.length - 1;
         if (age >= ageGroupBoundaries[ageGroupBoundaries.length - 1]) {
             return deathsByAgeGroup[lastIndex];
         }
-        return 0;
+        return 0; // jeśli nie pasuje (np. ujemny wiek), zwróć 0
     }
 }
-// Nowa klasa
+//Kolejna klasa
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -45,28 +53,32 @@ import java.util.Comparator;
 import java.util.List;
 
 public class DeathCauseStatisticList {
-    private List<DeathCauseStatistic> statistics = new ArrayList<>();
+    private List<DeathCauseStatistic> statistics = new ArrayList<>(); // lista obiektów DeathCauseStatistic
 
+    // Metoda ładuje dane z pliku CSV i uzupełnia listę
     public void repopulate(String filePath) {
-        statistics.clear();
+        statistics.clear(); // czyścimy listę na początek
         try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath))) {
-            reader.readLine(); // pomijamy nagłówek
+            reader.readLine(); // pomijamy nagłówek pliku
             String line;
-            while ((line = reader.readLine()) != null) {
-                DeathCauseStatistic stat = DeathCauseStatistic.fromCsvLine(line);
+            while ((line = reader.readLine()) != null) {  // czytamy linie aż do końca pliku
+                DeathCauseStatistic stat = DeathCauseStatistic.fromCsvLine(line); // tworzymy obiekt z linii
+                // jeśli obiekt poprawny i kod ICD spełnia warunki, dodajemy do listy
                 if (stat != null && isValidICD10(stat.getIcdCode())) {
                     statistics.add(stat);
                 }
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            e.printStackTrace();  // w razie błędu wypisz stacktrace
         }
     }
 
+    // Sprawdzenie czy kod ICD-10 jest poprawny: litera + dwie cyfry
     private boolean isValidICD10(String code) {
         return code.matches("^[A-Z][0-9]{2}.*");
     }
 
+    // Pomocnicza klasa parująca chorobę i liczbę zgonów w danej grupie wiekowej
     private static class DiseaseDeathsPair {
         DeathCauseStatistic statistic;
         int deathCount;
@@ -77,18 +89,22 @@ public class DeathCauseStatisticList {
         }
     }
 
+    // Zwraca listę n najgroźniejszych chorób (najwięcej zgonów) dla podanego wieku
     public List<DeathCauseStatistic> mostDeadlyDiseases(int age, int n, int[] ageGroupBoundaries) {
         List<DiseaseDeathsPair> pairs = new ArrayList<>();
+        // Tworzymy listę par: choroba + liczba zgonów w grupie wiekowej dla wieku age
         for (DeathCauseStatistic stat : statistics) {
             int deaths = stat.getDeathsForAge(age, ageGroupBoundaries);
             pairs.add(new DiseaseDeathsPair(stat, deaths));
         }
+        // Sortujemy listę par malejąco po liczbie zgonów
         Collections.sort(pairs, new Comparator<DiseaseDeathsPair>() {
             @Override
             public int compare(DiseaseDeathsPair o1, DiseaseDeathsPair o2) {
                 return Integer.compare(o2.deathCount, o1.deathCount);
             }
         });
+        // Tworzymy listę wynikową i zwracamy n pierwszych chorób
         List<DeathCauseStatistic> result = new ArrayList<>();
         for (int i = 0; i < n && i < pairs.size(); i++) {
             result.add(pairs.get(i).statistic);
@@ -96,12 +112,12 @@ public class DeathCauseStatisticList {
         return result;
     }
 }
-// Interfejs
+// Interfejs z jedną metodą do pobierania opisu choroby na podstawie kodu
 public interface ICDCodeTabular {
+    // Jeśli kodu nie ma w opisie, rzuca IndexOutOfBoundsException
     String getDescription(String code) throws IndexOutOfBoundsException;
 }
 
-// Klasa implementujaca interfejs
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -112,16 +128,17 @@ import java.util.Map;
 public class ICDCodeTabularOptimizedForTime implements ICDCodeTabular {
     private Map<String, String> codeToDescription = new HashMap<>();
 
+    // Konstruktor - jednorazowo czyta cały plik i ładuje do pamięci mapę kod->opis
     public ICDCodeTabularOptimizedForTime(String filePath) {
         try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath))) {
             String line;
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
-                if (lineNumber < 88 || line.trim().isEmpty()) continue;
-                String[] parts = line.trim().split(" ", 2);
+                if (lineNumber < 88 || line.trim().isEmpty()) continue; // pomijamy pierwsze 87 linii i puste
+                String[] parts = line.trim().split(" ", 2); // dzielimy na kod i opis (maks 2 części)
                 if (parts.length == 2 && parts[0].matches("^[A-Z][0-9]{2}.*")) {
-                    codeToDescription.put(parts[0], parts[1]);
+                    codeToDescription.put(parts[0], parts[1]); // zapisujemy do mapy
                 }
             }
         } catch (IOException e) {
@@ -129,6 +146,7 @@ public class ICDCodeTabularOptimizedForTime implements ICDCodeTabular {
         }
     }
 
+    // Zwraca opis choroby dla podanego kodu (z pamięci)
     @Override
     public String getDescription(String code) throws IndexOutOfBoundsException {
         String desc = codeToDescription.get(code);
@@ -138,7 +156,7 @@ public class ICDCodeTabularOptimizedForTime implements ICDCodeTabular {
         return desc;
     }
 }
-// Kolejna klasa implementujaca interfejs
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -147,10 +165,12 @@ import java.nio.file.Paths;
 public class ICDCodeTabularOptimizedForMemory implements ICDCodeTabular {
     private String filePath;
 
+    // Konstruktor zapisuje tylko ścieżkę do pliku, nie czyta wszystkiego do pamięci
     public ICDCodeTabularOptimizedForMemory(String filePath) {
         this.filePath = filePath;
     }
 
+    // Za każdym razem czyta plik i szuka opisu dla danego kodu
     @Override
     public String getDescription(String code) throws IndexOutOfBoundsException {
         try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath))) {
@@ -158,31 +178,35 @@ public class ICDCodeTabularOptimizedForMemory implements ICDCodeTabular {
             int lineNumber = 0;
             while ((line = reader.readLine()) != null) {
                 lineNumber++;
-                if (lineNumber < 88 || line.trim().isEmpty()) continue;
+                if (lineNumber < 88 || line.trim().isEmpty()) continue; // pomijamy pierwsze linie i puste
                 String[] parts = line.trim().split(" ", 2);
                 if (parts.length == 2 && parts[0].equals(code)) {
-                    return parts[1];
+                    return parts[1]; // jeśli znajdziemy, zwracamy opis
                 }
             }
         } catch (IOException e) {
             e.printStackTrace();
         }
+        // jeśli nie znaleźliśmy kodu, rzucamy wyjątek
         throw new IndexOutOfBoundsException("Code not found: " + code);
     }
 }
-//Klasa main!
+
 import java.util.List;
 
 public class Main {
     public static void main(String[] args) {
-        String csvDeathsFile = "deaths_2019.csv";
-        String icdDescriptionsFile = "kody_chorob.txt";
+        String csvDeathsFile = "deaths_2019.csv";          // ścieżka do pliku CSV ze statystyką zgonów
+        String icdDescriptionsFile = "kody_chorob.txt";   // ścieżka do pliku z opisami ICD
 
+        // Definicja granic grup wiekowych (przykład)
         int[] ageGroupBoundaries = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90};
 
+        // Tworzymy listę statystyk i ładujemy dane z pliku CSV
         DeathCauseStatisticList deathStats = new DeathCauseStatisticList();
         deathStats.repopulate(csvDeathsFile);
 
+        // Pobieramy 5 najgroźniejszych chorób dla osoby w wieku 35 lat
         List<DeathCauseStatistic> topDiseases = deathStats.mostDeadlyDiseases(35, 5, ageGroupBoundaries);
 
         System.out.println("Top 5 chorób dla wieku 35:");
@@ -190,21 +214,5 @@ public class Main {
             System.out.println(stat.getIcdCode());
         }
 
-        ICDCodeTabular timeOptimized = new ICDCodeTabularOptimizedForTime(icdDescriptionsFile);
-        ICDCodeTabular memoryOptimized = new ICDCodeTabularOptimizedForMemory(icdDescriptionsFile);
-
-        String testCode = "J12.81";
-
-        try {
-            System.out.println("Opis (optymalizacja na czas): " + timeOptimized.getDescription(testCode));
-        } catch (IndexOutOfBoundsException e) {
-            System.out.println("Nie znaleziono kodu (czas)");
-        }
-
-        try {
-            System.out.println("Opis (optymalizacja na pamięć): " + memoryOptimized.getDescription(testCode));
-        } catch (IndexOutOfBoundsException e) {
-            System.out.println("Nie znaleziono kodu (pamięć)");
-        }
-    }
-}
+        // Tworzymy obiekty do odczytu opisów: jeden ładuje wszystko na start (czas),
+        //
