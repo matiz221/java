@@ -1,0 +1,243 @@
+package com.example.circleapp;
+
+import javafx.application.Application;
+import javafx.fxml.FXMLLoader;
+import javafx.scene.Scene;
+import javafx.stage.Stage;
+
+public class MainApp extends Application {
+  @Override
+  public void start(Stage stage) throws Exception {
+    FXMLLoader loader = new FXMLLoader(getClass().getResource("app-view.fxml"));
+    Scene scene = new Scene(loader.load());
+    stage.setTitle("Circle App");
+    stage.setScene(scene);
+    stage.show();
+  }
+
+  public static void main(String[] args) {
+    launch();
+  }
+}
+
+package com.example.circleapp.shared;
+
+public record Dot(int x, int y, String color, int radius) {
+  public String toMessage() {
+    return x + "," + y + "," + color + "," + radius;
+  }
+  public static Dot fromMessage(String msg) {
+    var p = msg.split(",");
+    return new Dot(Integer.parseInt(p[0]), Integer.parseInt(p[1]), p[2], Integer.parseInt(p[3]));
+  }
+}
+
+package com.example.circleapp.server;
+
+import com.example.circleapp.shared.Dot;
+
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.sql.*;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.ArrayList;
+
+public class Server {
+  private final List<ServerThread> clients = new CopyOnWriteArrayList<>();
+  private Connection conn;
+  private final int port;
+
+  public Server(int port) throws SQLException {
+    this.port = port;
+    conn = DriverManager.getConnection("jdbc:sqlite:dots.db");
+    conn.createStatement().executeUpdate("""
+      CREATE TABLE IF NOT EXISTS dot (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        x INTEGER NOT NULL,
+        y INTEGER NOT NULL,
+        color TEXT NOT NULL,
+        radius INTEGER NOT NULL
+      );
+    """);
+  }
+
+  public void start() throws IOException {
+    var ss = new ServerSocket(port);
+    new Thread(() -> {
+      while (!ss.isClosed()) {
+        try {
+          Socket s = ss.accept();
+          ServerThread t = new ServerThread(s, this);
+          clients.add(t);
+          t.start();
+          sendSaved(t);
+        } catch (IOException e) { e.printStackTrace(); }
+      }
+    }).start();
+  }
+
+  private void sendSaved(ServerThread t) {
+    for (Dot d : getSavedDots())
+      t.sendMessage(d.toMessage());
+  }
+
+  public void broadcast(String msg) {
+    Dot d = Dot.fromMessage(msg);
+    save(d);
+    for (ServerThread t : clients) t.sendMessage(msg);
+  }
+
+  private void save(Dot d) {
+    try (var p = conn.prepareStatement("INSERT INTO dot(x,y,color,radius) VALUES(?,?,?,?)")) {
+      p.setInt(1, d.x()); p.setInt(2, d.y());
+      p.setString(3, d.color()); p.setInt(4, d.radius());
+      p.executeUpdate();
+    } catch (SQLException e) { e.printStackTrace(); }
+  }
+
+  public List<Dot> getSavedDots() {
+    var list = new ArrayList<Dot>();
+    try (var rs = conn.createStatement()
+            .executeQuery("SELECT x,y,color,radius FROM dot")) {
+      while (rs.next())
+        list.add(new Dot(rs.getInt("x"), rs.getInt("y"),
+                         rs.getString("color"), rs.getInt("radius")));
+    } catch (SQLException e) { e.printStackTrace(); }
+    return list;
+  }
+}
+
+package com.example.circleapp.server;
+
+import java.io.*;
+import java.net.Socket;
+
+public class ServerThread extends Thread {
+  private final Socket s;
+  private final Server srv;
+  private BufferedReader in;
+  private PrintWriter out;
+
+  public ServerThread(Socket s, Server srv) {
+    this.s = s; this.srv = srv;
+  }
+
+  @Override
+  public void run() {
+    try {
+      in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+      out = new PrintWriter(s.getOutputStream(), true);
+      String line;
+      while ((line = in.readLine()) != null) srv.broadcast(line);
+    } catch (IOException e) { e.printStackTrace(); }
+  }
+
+  public void sendMessage(String m) {
+    if (out != null) out.println(m);
+  }
+}
+
+package com.example.circleapp.client;
+
+import com.example.circleapp.shared.Dot;
+
+import java.io.*;
+import java.net.Socket;
+import java.util.function.Consumer;
+
+public class ServerThreadClient extends Thread {
+  private final String host;
+  private final int port;
+  private Socket s;
+  private BufferedReader in;
+  private PrintWriter out;
+  private Consumer<Dot> onDot;
+
+  public ServerThreadClient(String host, int port) {
+    this.host = host; this.port = port;
+  }
+
+  public void setOnDot(Consumer<Dot> c) { this.onDot = c; }
+
+  public void send(int x, int y, String col, int r) {
+    if (out != null) out.println(new Dot(x,y,col,r).toMessage());
+  }
+
+  @Override
+  public void run() {
+    try {
+      s = new Socket(host, port);
+      in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+      out = new PrintWriter(s.getOutputStream(), true);
+      String line;
+      while ((line = in.readLine()) != null)
+        onDot.accept(Dot.fromMessage(line));
+    } catch (IOException e) { e.printStackTrace(); }
+  }
+}
+
+package com.example.circleapp;
+
+import com.example.circleapp.client.ServerThreadClient;
+import com.example.circleapp.server.Server;
+import com.example.circleapp.shared.Dot;
+import javafx.fxml.FXML;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
+import javafx.scene.control.ColorPicker;
+import javafx.scene.control.Slider;
+import javafx.scene.control.TextField;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.paint.Color;
+
+public class Controller {
+  @FXML private TextField addressField, portField;
+  @FXML private ColorPicker colorPicker;
+  @FXML private Slider radiusSlider;
+  @FXML private Canvas canvas;
+
+  private Server srv;
+  private ServerThreadClient stc;
+  private GraphicsContext gc;
+
+  @FXML
+  public void initialize() {
+    gc = canvas.getGraphicsContext2D();
+  }
+
+  @FXML
+  public void onMouseClicked(MouseEvent e) {
+    int x = (int)e.getX(), y = (int)e.getY(),
+        r = (int)radiusSlider.getValue();
+    String col = String.format("#%02X%02X%02X",
+        (int)(colorPicker.getValue().getRed()*255),
+        (int)(colorPicker.getValue().getGreen()*255),
+        (int)(colorPicker.getValue().getBlue()*255));
+    stc.send(x, y, col, r);
+  }
+
+  @FXML
+  public void onStartServerClicked() {
+    int p = Integer.parseInt(portField.getText());
+    try {
+      srv = new Server(p);
+      srv.start();
+      onConnectClicked(); // auto connect localhost
+    } catch (Exception ex) { ex.printStackTrace(); }
+  }
+
+  @FXML
+  public void onConnectClicked() {
+    String addr = addressField.getText();
+    int p = Integer.parseInt(portField.getText());
+    stc = new ServerThreadClient(addr, p);
+    stc.setOnDot(dot -> {
+      gc.setFill(Color.web(dot.color()));
+      gc.fillOval(dot.x() - dot.radius(), dot.y() - dot.radius(),
+                  dot.radius() *2, dot.radius() *2);
+    });
+    stc.start();
+  }
+}
